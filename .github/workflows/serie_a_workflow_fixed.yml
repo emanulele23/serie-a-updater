@@ -1,0 +1,35 @@
+name: Serie A M3U8 Updater
+
+on:
+  schedule:
+    - cron: '0 12 * * *'  # Esegue ogni giorno alle 12:00 UTC
+  workflow_dispatch:  # Permette l'esecuzione manuale
+
+jobs:
+  update-m3u8:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4
+        
+    - name: Run updater script
+      run: |
+        python serie_a_m3u8_updater_fixed.py
+        
+    - name: Commit and push if changed
+      run: |
+        git config --global user.name 'GitHub Action'
+        git config --global user.email 'action@github.com'
+        git add serie_a.m3u8
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Aggiornamento giornaliero lista Serie A $(date +'%d-%m-%Y')" && git push)
