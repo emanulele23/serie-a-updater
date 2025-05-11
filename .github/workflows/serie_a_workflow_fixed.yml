@@ -5,6 +5,10 @@ on:
     - cron: '0 12 * * *'  # Esegue ogni giorno alle 12:00 UTC
   workflow_dispatch:  # Permette l'esecuzione manuale
 
+# Aggiungi permessi espliciti
+permissions:
+  contents: write
+
 jobs:
   update-m3u8:
     runs-on: ubuntu-latest
@@ -31,5 +35,5 @@ jobs:
       run: |
         git config --global user.name 'GitHub Action'
         git config --global user.email 'action@github.com'
-        git add serie_a.m3u8
+        git add serie_a.m3u8 || true
         git diff --quiet && git diff --staged --quiet || (git commit -m "Aggiornamento giornaliero lista Serie A $(date +'%d-%m-%Y')" && git push)
