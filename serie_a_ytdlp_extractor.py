@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
-Estrattore di Stream Serie A
------------------------------
-Questo script estrae gli URL degli stream M3U8 per le partite di Serie A
-utilizzando tecniche avanzate di estrazione simili a Video DownloadHelper.
-Autore: Claude
-Data: Maggio 2025
+Estrattore di Stream Serie A - Approccio simile a m3u8downloader
+---------------------------------------------------------------
+Questo script utilizza tecniche simili al progetto m3u8downloader per
+estrarre gli URL degli stream M3U8 per le partite di Serie A.
 """
 
 import requests
@@ -13,10 +11,7 @@ from bs4 import BeautifulSoup
 import re
 import logging
 import time
-import subprocess
-import json
 from datetime import datetime
-import random
 
 # Configurazione logging
 logging.basicConfig(
@@ -35,64 +30,70 @@ URL_LISTA = f"{URL_BASE}/streaming-gratis-calcio-1.php"
 OUTPUT_FILE = "serie_a.m3u8"
 SEARCH_TERM = "Serie A"  # Termine da cercare negli h6
 
-# Lista di User-Agent per rotazione
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Safari/605.1.15',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59'
-]
+# Headers comuni per simulare un browser
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Referer': URL_BASE,
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'same-origin',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+}
 
-def get_random_ua():
-    """Restituisce un User-Agent casuale dalla lista."""
-    return random.choice(USER_AGENTS)
-
-def get_headers(referer=None):
-    """Genera headers con User-Agent casuale e referer opzionale."""
-    headers = {
-        'User-Agent': get_random_ua(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'max-age=0',
-    }
-    
-    if referer:
-        headers['Referer'] = referer
-        
-    return headers
-
-def get_page_content(url, referer=None, allow_redirects=True):
+def get_page_content(url, headers=None, session=None):
     """Scarica il contenuto della pagina specificata."""
     try:
-        headers = get_headers(referer)
-        session = requests.Session()
+        if headers is None:
+            headers = HEADERS
         
-        # Aggiungi un piccolo delay per simulare comportamento umano
-        time.sleep(random.uniform(0.5, 1.5))
-        
-        response = session.get(url, headers=headers, timeout=30, allow_redirects=allow_redirects)
-        response.raise_for_status()
-        
-        final_url = response.url
-        if allow_redirects and final_url != url:
-            logger.info(f"Reindirizzato da {url} a {final_url}")
+        if session is None:
+            session = requests.Session()
             
-        return response.text, session, final_url
+        response = session.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        return response.text, session
     except Exception as e:
         logger.error(f"Errore nel download della pagina {url}: {e}")
-        return None, None, None
+        return None, session
+
+def extract_m3u8_urls(html_content):
+    """Estrae URL M3U8 dal contenuto HTML usando un approccio simile a m3u8downloader."""
+    # Pattern per trovare URL M3U8
+    m3u8_pattern = r'(https?://[^"\'\s<>]+\.m3u8(?:[^"\'\s<>])*)'
+    matches = re.findall(m3u8_pattern, html_content)
+    
+    # Pulisci gli URL (rimuovi caratteri di escape e parametri duplicati)
+    clean_urls = []
+    for url in matches:
+        # Rimuovi escape per caratteri speciali
+        url = url.replace('\\/', '/').replace('\\&', '&').replace('\\=', '=')
+        
+        # A volte ci sono caratteri di terminazione come ) o } alla fine dell'URL
+        url = re.sub(r'[)\]}]$', '', url)
+        
+        clean_urls.append(url)
+    
+    # Filtra per URL autenticati
+    auth_urls = [url for url in clean_urls if "md5=" in url or "token=" in url or "auth=" in url or "expiretime=" in url]
+    
+    if auth_urls:
+        logger.info(f"Trovati {len(auth_urls)} URL M3U8 autenticati")
+        return auth_urls
+    
+    logger.info(f"Trovati {len(clean_urls)} URL M3U8 non autenticati")
+    return clean_urls
 
 def extract_iframe_urls(html_content, base_url):
     """Estrae gli URL degli iframe dal contenuto HTML."""
     iframe_urls = []
     soup = BeautifulSoup(html_content, 'html.parser')
     
-    iframes = soup.find_all('iframe')
-    for iframe in iframes:
+    for iframe in soup.find_all('iframe'):
         src = iframe.get('src')
         if src:
             # Normalizza l'URL
@@ -102,213 +103,140 @@ def extract_iframe_urls(html_content, base_url):
                 src = base_url + ('/' if not base_url.endswith('/') and not src.startswith('/') else '') + src.lstrip('/')
             
             iframe_urls.append(src)
-            logger.info(f"Trovato iframe: {src}")
-            
+    
+    logger.info(f"Trovati {len(iframe_urls)} iframe")
     return iframe_urls
 
-def extract_m3u8_from_javascript(js_content):
-    """Estrae URL M3U8 da contenuto JavaScript."""
-    m3u8_urls = []
+def scan_for_m3u8_in_iframes(iframe_urls, base_url, session):
+    """Esegue la scansione degli iframe alla ricerca di URL M3U8."""
+    all_m3u8_urls = []
     
-    # Pattern per variabili JavaScript che potrebbero contenere URL M3U8
-    js_patterns = [
-        r'var\s+\w+\s*=\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
-        r'source\s*:\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
-        r'file\s*:\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
-        r'src\s*:\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
-        r'url\s*:\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
-    ]
-    
-    for pattern in js_patterns:
-        matches = re.findall(pattern, js_content)
-        for match in matches:
-            if '.m3u8' in match:
-                # Assicurati che sia un URL completo
-                if match.startswith('//'):
-                    match = 'https:' + match
-                elif not match.startswith('http'):
-                    continue
+    for iframe_url in iframe_urls:
+        try:
+            logger.info(f"Scansione iframe: {iframe_url}")
+            
+            # Ottieni il contenuto dell'iframe
+            iframe_content, session = get_page_content(
+                iframe_url, 
+                headers={**HEADERS, 'Referer': base_url},
+                session=session
+            )
+            
+            if iframe_content:
+                # Cerca URL M3U8 nell'iframe
+                iframe_m3u8_urls = extract_m3u8_urls(iframe_content)
+                all_m3u8_urls.extend(iframe_m3u8_urls)
                 
-                m3u8_urls.append(match)
-                
-    return m3u8_urls
+                # Cerca iframe annidati
+                nested_iframes = extract_iframe_urls(iframe_content, iframe_url)
+                if nested_iframes:
+                    nested_m3u8_urls = scan_for_m3u8_in_iframes(nested_iframes, iframe_url, session)
+                    all_m3u8_urls.extend(nested_m3u8_urls)
+        except Exception as e:
+            logger.error(f"Errore nella scansione dell'iframe {iframe_url}: {e}")
+    
+    return all_m3u8_urls
 
-def extract_m3u8_direct(html_content):
-    """Estrae URL M3U8 direttamente dal contenuto HTML."""
-    # Pattern per URL M3U8
-    m3u8_pattern = r'(https?://[^"\'\s]+\.m3u8[^"\'\s,)]*)'
-    matches = re.findall(m3u8_pattern, html_content)
+def check_url_accessibility(url, headers=None, session=None):
+    """Verifica se un URL è accessibile."""
+    if headers is None:
+        headers = HEADERS
     
-    return matches
+    if session is None:
+        session = requests.Session()
+        
+    try:
+        response = session.head(url, headers=headers, timeout=5)
+        return response.status_code < 400
+    except:
+        try:
+            # Alcuni server non supportano HEAD, prova con GET
+            response = session.get(url, headers=headers, timeout=5, stream=True)
+            response.close()  # Chiudi la connessione subito
+            return response.status_code < 400
+        except:
+            return False
 
-def extract_access_tokens(html_content):
-    """Estrae token di accesso o parametri di autenticazione che potrebbero essere usati per costruire URL."""
-    tokens = {}
+def prioritize_m3u8_urls(m3u8_urls, title):
+    """Dà priorità agli URL M3U8 in base a criteri specifici."""
+    if not m3u8_urls:
+        return None
     
-    # Pattern per token MD5
-    md5_pattern = r'md5\s*[:=]\s*["\']([^"\']+)["\']'
-    md5_matches = re.findall(md5_pattern, html_content)
-    if md5_matches:
-        tokens['md5'] = md5_matches[0]
+    # Filtra e ordina per priorità
     
-    # Pattern per token di scadenza
-    expire_pattern = r'expiretime\s*[:=]\s*["\']?(\d+)["\']?'
-    expire_matches = re.findall(expire_pattern, html_content)
-    if expire_matches:
-        tokens['expiretime'] = expire_matches[0]
+    # 1. Prima priorità: URL con parametri di autenticazione
+    auth_urls = [url for url in m3u8_urls if "md5=" in url and "expiretime=" in url]
+    if auth_urls:
+        logger.info(f"Uso URL autenticato con md5 e expiretime")
+        return auth_urls[0]
     
-    # Pattern per altri token comuni
-    token_pattern = r'token\s*[:=]\s*["\']([^"\']+)["\']'
-    token_matches = re.findall(token_pattern, html_content)
-    if token_matches:
-        tokens['token'] = token_matches[0]
+    # 2. Seconda priorità: URL con qualsiasi parametro di autenticazione
+    other_auth_urls = [url for url in m3u8_urls if "token=" in url or "auth=" in url or "key=" in url]
+    if other_auth_urls:
+        logger.info(f"Uso URL autenticato con altri parametri")
+        return other_auth_urls[0]
     
-    return tokens
+    # 3. Terza priorità: URL da domini conosciuti per lo streaming
+    known_domain_urls = [url for url in m3u8_urls if any(domain in url for domain in ["eachna.fun", "etrhg.fun"])]
+    if known_domain_urls:
+        logger.info(f"Uso URL da dominio conosciuto")
+        return known_domain_urls[0]
+    
+    # 4. Ultima priorità: altri URL, evitando quelli generici noti
+    filtered_urls = [url for url in m3u8_urls if "hls.kangal.icu/hls/serie/index.m3u8" not in url]
+    if filtered_urls:
+        logger.info(f"Uso URL generico filtrato")
+        return filtered_urls[0]
+    
+    # Se non c'è altro, usa il primo URL disponibile
+    logger.info(f"Uso primo URL disponibile")
+    return m3u8_urls[0]
 
-def deep_scan_iframe(iframe_url, parent_url):
-    """Analizza in profondità un iframe per trovare URL M3U8."""
-    logger.info(f"Analisi profonda dell'iframe: {iframe_url}")
+def extract_stream_url(match_url, title):
+    """Estrae l'URL dello stream dalla pagina della partita usando l'approccio m3u8downloader."""
+    logger.info(f"Estrazione URL da: {match_url}")
     
-    html_content, session, final_url = get_page_content(iframe_url, referer=parent_url)
+    # Crea una sessione per mantenere i cookie
+    session = requests.Session()
+    
+    # Ottieni il contenuto della pagina principale
+    html_content, session = get_page_content(match_url, session=session)
     if not html_content:
-        return []
+        return None
     
     # Lista per memorizzare tutti gli URL M3U8 trovati
     all_m3u8_urls = []
     
-    # 1. Cerca URL M3U8 diretti nell'HTML
-    direct_urls = extract_m3u8_direct(html_content)
-    all_m3u8_urls.extend(direct_urls)
+    # 1. Cerca URL M3U8 nella pagina principale
+    page_m3u8_urls = extract_m3u8_urls(html_content)
+    all_m3u8_urls.extend(page_m3u8_urls)
     
-    # 2. Cerca URL in JavaScript
-    soup = BeautifulSoup(html_content, 'html.parser')
-    scripts = soup.find_all('script')
+    # 2. Estrai iframe
+    iframe_urls = extract_iframe_urls(html_content, match_url)
     
-    for script in scripts:
-        script_content = script.string
-        if not script_content:
-            continue
-            
-        js_urls = extract_m3u8_from_javascript(script_content)
-        all_m3u8_urls.extend(js_urls)
+    # 3. Scansiona iframe
+    iframe_m3u8_urls = scan_for_m3u8_in_iframes(iframe_urls, match_url, session)
+    all_m3u8_urls.extend(iframe_m3u8_urls)
     
-    # 3. Cerca iframe annidati
-    nested_iframes = extract_iframe_urls(html_content, iframe_url)
+    # 4. Rimuovi duplicati
+    unique_m3u8_urls = list(set(all_m3u8_urls))
+    logger.info(f"Trovati {len(unique_m3u8_urls)} URL M3U8 unici")
     
-    for nested_url in nested_iframes:
-        if nested_url != iframe_url:  # Evita loop infiniti
-            nested_urls = deep_scan_iframe(nested_url, iframe_url)
-            all_m3u8_urls.extend(nested_urls)
+    # 5. Verifica l'accessibilità degli URL
+    accessible_urls = []
+    for url in unique_m3u8_urls:
+        if check_url_accessibility(url, session=session):
+            logger.info(f"URL accessibile: {url}")
+            accessible_urls.append(url)
+        else:
+            logger.info(f"URL non accessibile: {url}")
     
-    # 4. Cerca token di accesso
-    tokens = extract_access_tokens(html_content)
-    
-    # Se abbiamo trovato token di accesso, possiamo provare a costruire URL completi
-    if tokens and 'md5' in tokens and 'expiretime' in tokens:
-        # Pattern comuni di base URL per stream con autenticazione
-        base_domains = [
-            "duko.eachna.fun",
-            "liauth.etrhg.fun",
-            "hls.kangal.icu"
-        ]
-        
-        # Cerca riferimenti a path negli script
-        path_pattern = r'path\s*[:=]\s*["\']([^"\']+)["\']'
-        path_matches = re.findall(path_pattern, html_content)
-        
-        stream_name_pattern = r'(juve\d+|inter\d+|milan\d+|napoli\d+|roma\d+|lazio\d+)'
-        stream_matches = re.findall(stream_name_pattern, html_content)
-        
-        paths = []
-        if path_matches:
-            paths.extend(path_matches)
-        if stream_matches:
-            paths.extend([f"hls/{match}/index.m3u8" for match in stream_matches])
-        
-        # Aggiungi alcuni path comuni
-        if not paths:
-            paths = ["hls/serie/index.m3u8", "hls/stream/index.m3u8", "index.m3u8"]
-        
-        # Costruisci URL potenziali
-        for domain in base_domains:
-            for path in paths:
-                url = f"https://{domain}/{path}?md5={tokens['md5']}&expiretime={tokens['expiretime']}"
-                all_m3u8_urls.append(url)
-    
-    # Rimuovi duplicati
-    return list(set(all_m3u8_urls))
-
-def advanced_m3u8_extraction(url):
-    """
-    Estrattore avanzato di URL M3U8 che usa tecniche multiple.
-    Simula il comportamento di Video DownloadHelper.
-    """
-    try:
-        logger.info(f"Estrazione avanzata da: {url}")
-        
-        # 1. Ottieni il contenuto della pagina principale
-        html_content, session, final_url = get_page_content(url)
-        if not html_content:
-            return None
-        
-        # 2. Lista per memorizzare tutti gli URL M3U8 trovati
-        all_m3u8_urls = []
-        
-        # 3. Cerca URL M3U8 diretti
-        direct_urls = extract_m3u8_direct(html_content)
-        all_m3u8_urls.extend(direct_urls)
-        
-        # 4. Cerca URL in JavaScript
-        soup = BeautifulSoup(html_content, 'html.parser')
-        scripts = soup.find_all('script')
-        
-        for script in scripts:
-            script_content = script.string
-            if not script_content:
-                continue
-                
-            js_urls = extract_m3u8_from_javascript(script_content)
-            all_m3u8_urls.extend(js_urls)
-        
-        # 5. Cerca iframe e analizzali in profondità
-        iframe_urls = extract_iframe_urls(html_content, final_url)
-        
-        for iframe_url in iframe_urls:
-            iframe_m3u8_urls = deep_scan_iframe(iframe_url, final_url)
-            all_m3u8_urls.extend(iframe_m3u8_urls)
-        
-        # 6. Rimuovi duplicati
-        unique_urls = list(set(all_m3u8_urls))
-        
-        # 7. Filtra per priorità
-        # Priorità a URL con parametri di autenticazione
-        auth_urls = [u for u in unique_urls if "md5=" in u and "expiretime=" in u]
-        if auth_urls:
-            logger.info(f"Trovati {len(auth_urls)} URL M3U8 autenticati: {auth_urls[0]}")
-            return auth_urls[0]  # Restituisci il primo URL autenticato
-            
-        token_urls = [u for u in unique_urls if "token=" in u or "auth=" in u or "key=" in u]
-        if token_urls:
-            logger.info(f"Trovati {len(token_urls)} URL M3U8 con token: {token_urls[0]}")
-            return token_urls[0]  # Restituisci il primo URL con token
-            
-        # Se non ci sono URL autenticati, restituisci un URL generico
-        if unique_urls:
-            # Evita gli URL generici conosciuti
-            filtered_urls = [u for u in unique_urls if "hls.kangal.icu/hls/serie/index.m3u8" not in u]
-            if filtered_urls:
-                logger.info(f"Trovati {len(filtered_urls)} URL M3U8 filtrati: {filtered_urls[0]}")
-                return filtered_urls[0]
-            else:
-                logger.info(f"Trovati solo URL generici: {unique_urls[0]}")
-                return unique_urls[0]
-        
-        logger.warning(f"Nessun URL M3U8 trovato per: {url}")
-        return None
-            
-    except Exception as e:
-        logger.error(f"Errore nell'estrazione avanzata: {e}")
-        return None
+    if accessible_urls:
+        # 6. Dà priorità agli URL accessibili
+        return prioritize_m3u8_urls(accessible_urls, title)
+    else:
+        # Se nessun URL è accessibile, prova comunque con la prioritizzazione standard
+        return prioritize_m3u8_urls(unique_m3u8_urls, title)
 
 def create_m3u8_file(matches):
     """Crea il file M3U8 con le partite trovate."""
@@ -341,7 +269,7 @@ def main():
     logger.info("Inizio aggiornamento lista Serie A")
     
     # Ottieni la lista delle partite
-    content, _, _ = get_page_content(URL_LISTA)
+    content, _ = get_page_content(URL_LISTA)
     if not content:
         logger.error("Impossibile ottenere la lista delle partite")
         return
@@ -378,23 +306,8 @@ def main():
             # Aggiungi un piccolo delay per non sovraccaricare il server
             time.sleep(2)
             
-            # Usa l'estrattore avanzato
-            stream_url = advanced_m3u8_extraction(match_url)
-            
-            # Prova con yt-dlp come backup
-            if not stream_url:
-                try:
-                    logger.info(f"Estrattore avanzato fallito, tentativo con yt-dlp: {match_url}")
-                    cmd = ["yt-dlp", "--print", "urls", "--no-warnings", match_url]
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    urls = result.stdout.strip().split('\n')
-                    
-                    # Filtra per trovare URL M3U8
-                    m3u8_urls = [u for u in urls if '.m3u8' in u]
-                    if m3u8_urls:
-                        stream_url = m3u8_urls[0]
-                except Exception as e:
-                    logger.error(f"Errore con yt-dlp: {e}")
+            # Estrai URL dello stream
+            stream_url = extract_stream_url(match_url, title)
             
             if stream_url:
                 partite_trovate.append((title, stream_url))
