@@ -28,7 +28,7 @@ jobs:
         
     - name: Run updater script
       run: |
-        python serie_a_m3u8_updater_fixed.py
+        python serie_a_selenium_extractor.py
         
     - name: Commit and push changes
       uses: stefanzweifel/git-auto-commit-action@v4
