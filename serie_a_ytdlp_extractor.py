@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Estrattore di Stream Serie A - Versione Super Semplificata
----------------------------------------------------------
-Questo script estrae gli URL degli stream M3U8 per le partite di Serie A
-usando un approccio semplice ma efficace.
+Estrattore di Stream Serie A - Usando m3u8 parser
+------------------------------------------------
+Questo script utilizza la libreria m3u8 di Globo.com per analizzare
+ed estrarre gli URL degli stream M3U8 per le partite di Serie A.
 """
 
 import requests
@@ -11,6 +11,8 @@ from bs4 import BeautifulSoup
 import re
 import logging
 import time
+import m3u8
+from urllib.parse import urljoin
 from datetime import datetime
 
 # Configurazione logging
@@ -66,7 +68,7 @@ def find_iframes(html_content, base_url):
             if src.startswith('//'):
                 src = 'https:' + src
             elif not src.startswith('http'):
-                src = base_url + ('/' if not base_url.endswith('/') else '') + src.lstrip('/')
+                src = urljoin(base_url, src)
             
             iframe_urls.append(src)
     
@@ -74,11 +76,11 @@ def find_iframes(html_content, base_url):
 
 def find_m3u8_urls(html_content):
     """Trova tutti gli URL M3U8 nella pagina."""
-    # Pattern più ampio per catturare URL M3U8
+    # Pattern ampio per catturare URL M3U8
     m3u8_pattern = r'(https?://[^"\'\s<>)]+\.m3u8(?:[^"\'\s<>),]*)?)'
     matches = re.findall(m3u8_pattern, html_content)
     
-    # Pulisci gli URL (rimuovi caratteri di escape)
+    # Pulisci gli URL
     clean_urls = []
     for url in matches:
         # Rimuovi escape per caratteri speciali
@@ -89,23 +91,63 @@ def find_m3u8_urls(html_content):
     
     return clean_urls
 
+def validate_m3u8_url(url):
+    """Verifica se un URL M3U8 è valido usando la libreria m3u8."""
+    try:
+        # Imposta un timeout più breve per questa richiesta
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        response.raise_for_status()
+        
+        # Prova a parsare l'M3U8
+        parsed_m3u8 = m3u8.loads(response.text)
+        
+        # Controlla se è un master playlist o media playlist
+        if parsed_m3u8.is_variant:
+            # È un master playlist, controlla se ci sono playlists
+            if parsed_m3u8.playlists:
+                logger.info(f"URL valido (master playlist con {len(parsed_m3u8.playlists)} varianti): {url}")
+                return True
+        elif parsed_m3u8.segments:
+            # È un media playlist, controlla se ci sono segmenti
+            logger.info(f"URL valido (media playlist con {len(parsed_m3u8.segments)} segmenti): {url}")
+            return True
+        
+        logger.warning(f"URL M3U8 non valido (nessun segmento/playlist): {url}")
+        return False
+    except Exception as e:
+        logger.warning(f"URL M3U8 non valido: {url} - Errore: {e}")
+        return False
+
 def get_best_url(m3u8_urls):
     """Seleziona il miglior URL M3U8 dalla lista."""
     if not m3u8_urls:
         return None
     
+    # Verifica quali URL sono validi
+    valid_urls = []
+    for url in m3u8_urls:
+        if validate_m3u8_url(url):
+            valid_urls.append(url)
+    
+    if not valid_urls:
+        logger.warning("Nessun URL M3U8 valido trovato")
+        return None
+    
     # Dai priorità agli URL con parametri di autenticazione
-    auth_urls = [url for url in m3u8_urls if "md5=" in url or "token=" in url]
+    auth_urls = [url for url in valid_urls if "md5=" in url or "token=" in url]
     if auth_urls:
+        logger.info(f"Selezionato URL autenticato: {auth_urls[0]}")
         return auth_urls[0]
     
     # Filtra per evitare URL generici noti
-    non_generic_urls = [url for url in m3u8_urls if "kangal.icu/hls/serie/index.m3u8" not in url]
+    non_generic_urls = [url for url in valid_urls if "kangal.icu/hls/serie/index.m3u8" not in url]
     if non_generic_urls:
+        logger.info(f"Selezionato URL non generico: {non_generic_urls[0]}")
         return non_generic_urls[0]
     
-    # Se tutto fallisce, restituisci il primo URL
-    return m3u8_urls[0]
+    # Se tutto fallisce, restituisci il primo URL valido
+    logger.info(f"Selezionato primo URL valido: {valid_urls[0]}")
+    return valid_urls[0]
 
 def extract_stream_url(match_url):
     """Estrae l'URL dello stream dalla pagina della partita."""
@@ -156,7 +198,7 @@ def extract_stream_url(match_url):
     if best_url:
         logger.info(f"URL migliore selezionato: {best_url}")
     else:
-        logger.warning("Nessun URL M3U8 trovato")
+        logger.warning("Nessun URL M3U8 valido trovato")
     
     return best_url
 
